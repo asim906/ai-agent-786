@@ -50,9 +50,10 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     { role: 'user', content: userText },
   ];
 
-  console.log(`[AI] 🚀 generateAIReply called | model=${model} | keyPrefix=${apiKey ? apiKey.substring(0,12)+'...' : 'EMPTY'} | userText="${userText.substring(0,60)}"`);
+  const safeKey = apiKey ? apiKey.trim() : '';
+  console.log(`[AI] 🚀 generateAIReply called | model=${model} | keyPrefix=${safeKey ? safeKey.substring(0,12)+'...' : 'EMPTY'} | userText="${userText.substring(0,60)}"`);
 
-  if (!apiKey || !apiKey.trim()) {
+  if (!safeKey) {
     console.error('[AI] ❌ API key is empty — cannot call AI');
     return null;
   }
@@ -65,14 +66,14 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
         .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
       const sys = messages.find(m => m.role === 'system');
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${safeKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: sys ? { parts: [{ text: sys.content }] } : undefined,
             contents,
-            generationConfig: { maxOutputTokens: 500, temperature: 0.7 },
+            generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
           }),
         }
       );
@@ -88,8 +89,8 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
       console.log('[AI] Using OpenAI GPT-4o-mini...');
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gpt-4o-mini', messages, max_tokens: 500, temperature: 0.7 }),
+        headers: { Authorization: `Bearer ${safeKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'gpt-4o-mini', messages, max_tokens: 1000, temperature: 0.7 }),
       });
       const data = await res.json();
       console.log('[AI] OpenAI raw response status:', res.status);
@@ -100,17 +101,23 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     }
 
     // OpenRouter (default)
-    console.log('[AI] Using OpenRouter (openai/gpt-3.5-turbo)...');
+    const openRouterModel = (model && model.includes('/')) ? model : 'openai/gpt-4o-mini';
+    console.log(`[AI] Using OpenRouter (${openRouterModel})...`);
+    
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${safeKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://whatsapp-ai-agent.app',
         'X-Title': 'WhatsApp AI Agent',
       },
-      // ✅ FIX: 'openrouter/free' is NOT a valid model — use a real free model
-      body: JSON.stringify({ model: 'openai/gpt-3.5-turbo', messages, max_tokens: 400 }),
+      body: JSON.stringify({ 
+        model: openRouterModel, 
+        messages, 
+        max_tokens: 1000,
+        temperature: 0.7 
+      }),
     });
     const data = await res.json();
     console.log('[AI] OpenRouter raw response status:', res.status);
@@ -118,6 +125,12 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     const reply = data?.choices?.[0]?.message?.content?.trim() || null;
     console.log(`[AI] OpenRouter reply: ${reply ? reply.substring(0,80) : 'NULL'}`);
     return reply;
+
+  } catch (err) {
+    console.error('[AI] ❌ Exception in generateAIReply:', err.message);
+    return null;
+  }
+}
 
   } catch (err) {
     console.error('[AI] ❌ Exception in generateAIReply:', err.message);
@@ -500,7 +513,7 @@ app.post('/api/settings/:userId', (req, res) => {
   const globalConf = {
     enabled: true,
     model: settingsObj.ai_model || 'openrouter',
-    apiKey: settingsObj.ai_api_key || '',
+    apiKey: settingsObj.ai_api_key ? settingsObj.ai_api_key.trim() : '',
     systemPrompt: ((settingsObj.ai_system_prompt || '') + '\n' + (settingsObj.ai_global_memory || '')).trim(),
   };
 
