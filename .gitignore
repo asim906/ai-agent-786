@@ -1,0 +1,21 @@
+# Root
+node_modules/
+.env
+.env.local
+.env.production
+*.log
+
+# Backend sessions (user-specific WhatsApp auth — never commit)
+backend/sessions/
+backend/temp_media/
+backend/eng.traineddata
+
+# Frontend build
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+
+# Misc
+.DS_Store
+Thumbs.db
+scratch.txt
