@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 
 interface QRCodePanelProps {
   qrCode: string | null;
-  connectionStatus: 'connected' | 'disconnected' | 'connecting';
+  connectionStatus: 'connected' | 'disconnected' | 'connecting' | 'needs_qr';
   onRequestQR: () => void;
 }
 

@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { BACKEND_URL } from '@/lib/config';
 
 export default function WebhookConfig({ userId }: { userId: string }) {
     const [webhookUrl, setWebhookUrl] = useState('');
@@ -15,7 +16,7 @@ export default function WebhookConfig({ userId }: { userId: string }) {
         // Save locally for frontend
         localStorage.setItem(`webhook_${userId}`, webhookUrl);
         // Dispatch to backend API
-        fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/api/webhook/config`, {
+        fetch(`${BACKEND_URL}/api/webhook/config`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId, webhookUrl })

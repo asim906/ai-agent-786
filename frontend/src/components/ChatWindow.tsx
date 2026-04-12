@@ -259,7 +259,7 @@ function WelcomeHub({ isDemo, onTabChange }: { isDemo?: boolean, onTabChange?: (
             </div>
 
             {isDemo && (
-                <div style={{ marginTop: 40 }} className="badge flex-row items-center justify-center font-bold" style={{ background: 'var(--accent-green)', padding: '8px 16px', borderRadius: '12px', color: '#fff' }}>
+                <div className="badge flex-row items-center justify-center font-bold" style={{ marginTop: 40, background: 'var(--accent-green)', padding: '8px 16px', borderRadius: '12px', color: '#fff' }}>
                     🛡️ Enterprise Demo Mode Active
                 </div>
             )}

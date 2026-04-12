@@ -64,7 +64,7 @@ function DashboardContent({ user, isDemo }: { user: any; isDemo: boolean }) {
   useEffect(() => {
     if (isDemo) { setConnectionStatus('connected'); return; }
 
-    const newSocket = io('http://localhost:3001', { transports: ['websocket'] });
+    const newSocket = io('https://whatsapp-ai-backend-production-38bd.up.railway.app');
     setSocket(newSocket);
 
     // ✅ KEY FIX: check_session first — don't blindly start a new one

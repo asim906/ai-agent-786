@@ -1,5 +1,6 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
+import { BACKEND_URL } from '@/lib/config';
 
 interface AudioPlayerProps {
   url: string;
@@ -14,7 +15,7 @@ export default function AudioPlayer({ url }: AudioPlayerProps) {
   const progressRef = useRef<HTMLDivElement>(null);
 
   // Use the full URL if it's relative
-  const fullUrl = url.startsWith('http') ? url : `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}${url}`;
+  const fullUrl = url.startsWith('http') ? url : `${BACKEND_URL}${url}`;
 
   const togglePlay = () => {
     if (!audioRef.current) return;

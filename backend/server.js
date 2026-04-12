@@ -120,25 +120,33 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
       }),
     });
     const data = await res.json();
-    console.log('[AI] OpenRouter raw response status:', res.status);
+    console.log(`[AI] OpenRouter status: ${res.status}`);
     
+    // 1. Handle API errors
     if (data.error) {
-       console.error('[AI] ❌ OpenRouter returned an error:', JSON.stringify(data.error));
-       return null;
+       const errMsg = data.error.message || JSON.stringify(data.error);
+       console.error(`[AI] ❌ OpenRouter Error: ${errMsg}`);
+       return `AI API Error: ${errMsg}`;
     }
 
+    // 2. Handle empty/missing choices
     if (!data.choices || data.choices.length === 0) {
        console.error('[AI] ❌ OpenRouter returned NO choices. Full response:', JSON.stringify(data));
-       return null;
+       return "AI Error: Model returned no response. Check your OpenRouter credits/quota.";
     }
 
-    const reply = data.choices[0].message?.content?.trim() || null;
-    console.log(`[AI] ✅ OpenRouter success. Reply start: "${reply ? reply.substring(0,50) : 'NULL'}"`);
+    const reply = data.choices[0].message?.content?.trim();
+    if (!reply) {
+       console.error('[AI] ❌ OpenRouter returned empty content. Full response:', JSON.stringify(data));
+       return "AI Error: Model returned an empty message.";
+    }
+
+    console.log(`[AI] ✅ SUCCESS. Reply (40 chars): "${reply.substring(0, 40)}..."`);
     return reply;
 
   } catch (err) {
     console.error('[AI] ❌ Exception in generateAIReply:', err.message);
-    return null;
+    return `AI Exception: ${err.message}`;
   }
 }
 

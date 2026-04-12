@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { BACKEND_URL } from '@/lib/config';
 import { getSetting, setSetting, getMemory, addMemory, deleteMemory } from '@/lib/db';
 import { AIModel } from '@/lib/aiService';
 
@@ -46,7 +47,7 @@ export default function AISettings({ userId, contactJid, contactName }: AISettin
       getSetting(userId, 'voice_ai_mode'),
       getSetting(userId, 'tts_voice'),
       import('@/lib/db').then(db => db.getQAMemory(userId, 'global')),
-      fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/api/voices`).then(r => r.json()).catch(() => []),
+      fetch(`${BACKEND_URL}/api/voices`).then(r => r.json()).catch(() => []),
     ]).then(([m, k, p, gm, vai, tts, gqa, vlist]) => {
       if (m) setModel(m as AIModel);
       if (k) setApiKey(k);
@@ -82,7 +83,7 @@ export default function AISettings({ userId, contactJid, contactName }: AISettin
 
     // Push to backend
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/api/settings/${userId}`, {
+      await fetch(`${BACKEND_URL}/api/settings/${userId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
