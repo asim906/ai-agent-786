@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "model": "openrouter",
+  "apiKey": "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",
+  "systemPrompt": "\n"
+}
