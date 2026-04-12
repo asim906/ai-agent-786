@@ -19,8 +19,9 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
 });
-app.use(cors());
-app.use(express.json());
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'] }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
 // Health check for Railway
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
@@ -49,8 +50,16 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     { role: 'user', content: userText },
   ];
 
+  console.log(`[AI] 🚀 generateAIReply called | model=${model} | keyPrefix=${apiKey ? apiKey.substring(0,12)+'...' : 'EMPTY'} | userText="${userText.substring(0,60)}"`);
+
+  if (!apiKey || !apiKey.trim()) {
+    console.error('[AI] ❌ API key is empty — cannot call AI');
+    return null;
+  }
+
   try {
     if (model === 'gemini') {
+      console.log('[AI] Using Gemini 2.0 Flash...');
       const contents = messages
         .filter(m => m.role !== 'system')
         .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
@@ -68,29 +77,50 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
         }
       );
       const data = await res.json();
-      return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+      console.log('[AI] Gemini raw response status:', res.status);
+      if (data.error) console.error('[AI] Gemini API error:', JSON.stringify(data.error));
+      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+      console.log(`[AI] Gemini reply: ${reply ? reply.substring(0,80) : 'NULL'}`);
+      return reply;
     }
+
     if (model === 'openai') {
+      console.log('[AI] Using OpenAI GPT-4o-mini...');
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'gpt-4o-mini', messages, max_tokens: 500, temperature: 0.7 }),
       });
       const data = await res.json();
-      return data?.choices?.[0]?.message?.content?.trim() || null;
+      console.log('[AI] OpenAI raw response status:', res.status);
+      if (data.error) console.error('[AI] OpenAI API error:', JSON.stringify(data.error));
+      const reply = data?.choices?.[0]?.message?.content?.trim() || null;
+      console.log(`[AI] OpenAI reply: ${reply ? reply.substring(0,80) : 'NULL'}`);
+      return reply;
     }
+
+    // OpenRouter (default)
+    console.log('[AI] Using OpenRouter (openai/gpt-3.5-turbo)...');
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://whatsapp-ai-agent.app', 'X-Title': 'WhatsApp AI Agent',
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://whatsapp-ai-agent.app',
+        'X-Title': 'WhatsApp AI Agent',
       },
-      body: JSON.stringify({ model: 'openrouter/free', messages, max_tokens: 400 }),
+      // ✅ FIX: 'openrouter/free' is NOT a valid model — use a real free model
+      body: JSON.stringify({ model: 'openai/gpt-3.5-turbo', messages, max_tokens: 400 }),
     });
     const data = await res.json();
-    return data?.choices?.[0]?.message?.content?.trim() || null;
+    console.log('[AI] OpenRouter raw response status:', res.status);
+    if (data.error) console.error('[AI] OpenRouter API error:', JSON.stringify(data.error));
+    const reply = data?.choices?.[0]?.message?.content?.trim() || null;
+    console.log(`[AI] OpenRouter reply: ${reply ? reply.substring(0,80) : 'NULL'}`);
+    return reply;
+
   } catch (err) {
-    console.error('[AI] Reply error:', err.message);
+    console.error('[AI] ❌ Exception in generateAIReply:', err.message);
     return null;
   }
 }
@@ -217,12 +247,20 @@ async function startSession(userId) {
 
         const text =
           msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text || '';
+          msg.message?.extendedTextMessage?.text ||
+          msg.message?.imageMessage?.caption || '';
         if (!text) continue;
 
         const senderName = msg.pushName || jid.split('@')[0];
         const phone = jid.split('@')[0];
-        console.log(`[${userId}] Msg from ${isFromMe ? 'Me' : senderName}: ${text.substring(0, 50)}`);
+
+        // ─── LOG: Incoming message received ───────────────────
+        console.log(`\n========================================`);
+        console.log(`[${userId}] 📩 INCOMING MESSAGE`);
+        console.log(`[${userId}]    From    : ${isFromMe ? 'ME (outgoing)' : senderName} (${jid})`);
+        console.log(`[${userId}]    Text    : "${text.substring(0, 80)}"`);
+        console.log(`[${userId}]    FromMe  : ${isFromMe}`);
+        console.log(`========================================`);
 
         // Emit ALL messages to frontend (sent from phone AND received)
         emitToUser(userId, 'message', { userId, jid, name: senderName, phone, text, fromMe: isFromMe, timestamp: Date.now() });
@@ -245,26 +283,81 @@ async function startSession(userId) {
         }
 
         // AI Auto-Reply SHOULD NOT trigger if the message was sent by the user themselves
-        if (isFromMe) continue;
+        if (isFromMe) {
+          console.log(`[${userId}] ⏭️  Skipping AI — message is from ME`);
+          continue;
+        }
 
-        if (!session) continue;
-        const aiConf = session.aiSettings?.[jid] || session.aiSettings?.['global'];
-        if (!aiConf?.apiKey) continue; // Note: removing enabled check for simplicity, if apiKey exists we assume enabled
+        // ─── LOG: AI trigger check ────────────────────────────
+        console.log(`[${userId}] 🤖 Checking AI auto-reply conditions...`);
 
+        if (!session) {
+          console.log(`[${userId}] ❌ AI Skip: no session object in activeSessions map`);
+          continue;
+        }
+
+        // Try contact-specific settings first, then global
+        const aiConf = session.aiSettings?.[jid] || session.aiSettings?.['global'] || null;
+
+        console.log(`[${userId}] 🔍 aiSettings dump:`, JSON.stringify({
+          hasSessionAiSettings: !!session.aiSettings,
+          keys: session.aiSettings ? Object.keys(session.aiSettings) : [],
+          globalExists: !!session.aiSettings?.['global'],
+          globalModel: session.aiSettings?.['global']?.model,
+          globalKeyPrefix: session.aiSettings?.['global']?.apiKey ? session.aiSettings['global'].apiKey.substring(0,12)+'...' : 'EMPTY',
+        }));
+
+        if (!aiConf) {
+          console.log(`[${userId}] ❌ AI Skip: no AI settings found (neither contact-specific nor global)`);
+          console.log(`[${userId}] 💡 Fix: Go to dashboard Settings tab and click Save Settings`);
+          continue;
+        }
+
+        if (!aiConf.apiKey || !aiConf.apiKey.trim()) {
+          console.log(`[${userId}] ❌ AI Skip: apiKey is EMPTY`);
+          console.log(`[${userId}] 💡 Fix: Enter your API key in Settings and click Save Settings`);
+          continue;
+        }
+
+        // ─── LOG: AI is triggering ────────────────────────────
+        console.log(`[${userId}] ✅ AI TRIGGERING | model=${aiConf.model} | key=${aiConf.apiKey.substring(0,12)}...`);
+
+        if (!session.conversationHistory) session.conversationHistory = {};
         if (!session.conversationHistory[jid]) session.conversationHistory[jid] = [];
         session.conversationHistory[jid].push({ role: 'user', content: text });
         const history = session.conversationHistory[jid].slice(-10);
 
+        console.log(`[${userId}] 📤 Calling AI API...`);
         const reply = await generateAIReply(
-          aiConf.model || 'gemini', aiConf.apiKey, aiConf.systemPrompt,
-          history.slice(0, -1), text
+          aiConf.model || 'openrouter',
+          aiConf.apiKey,
+          aiConf.systemPrompt,
+          history.slice(0, -1),
+          text
         );
 
+        // ─── LOG: AI response captured ────────────────────────
         if (reply) {
-          await waSocket.sendMessage(jid, { text: reply });
-          session.conversationHistory[jid].push({ role: 'assistant', content: reply });
-          emitToUser(userId, 'message', { userId, jid, name: senderName, phone, text: reply, fromMe: true, timestamp: Date.now(), aiGenerated: true });
+          console.log(`[${userId}] ✅ AI RESPONSE RECEIVED: "${reply.substring(0, 100)}"`);
+          console.log(`[${userId}] 📱 Sending AI reply to WhatsApp (${jid})...`);
+          try {
+            await waSocket.sendMessage(jid, { text: reply });
+            session.conversationHistory[jid].push({ role: 'assistant', content: reply });
+            emitToUser(userId, 'message', {
+              userId, jid, name: senderName, phone,
+              text: reply, fromMe: true,
+              timestamp: Date.now(),
+              aiGenerated: true
+            });
+            console.log(`[${userId}] ✅ AI REPLY SENT SUCCESSFULLY to ${jid}`);
+          } catch (sendErr) {
+            console.error(`[${userId}] ❌ FAILED to send AI reply via waSocket:`, sendErr.message);
+          }
+        } else {
+          console.log(`[${userId}] ❌ AI returned NULL — reply NOT sent`);
+          console.log(`[${userId}] 💡 Check: API key validity, model name, API quota`);
         }
+        console.log(`========================================\n`);
       }
     });
 
@@ -350,8 +443,49 @@ io.on('connection', (socketClient) => {
   });
 });
 
-// ─── REST ───────────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ status: 'ok', sessions: activeSessions.size }));
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), sessions: activeSessions.size }));
+
+// Debug endpoint — returns RAM state of AI settings for a user
+app.get('/api/debug/:userId', (req, res) => {
+  const session = activeSessions.get(req.params.userId);
+  if (!session) return res.json({ found: false, activeSessions: [...activeSessions.keys()] });
+  const ai = session.aiSettings?.global || null;
+  res.json({
+    found: true,
+    status: session.status,
+    hasApiKey: !!(ai?.apiKey),
+    model: ai?.model || null,
+    keyPrefix: ai?.apiKey ? ai.apiKey.substring(0, 12) + '...' : 'EMPTY',
+    aiSettingsKeys: session.aiSettings ? Object.keys(session.aiSettings) : [],
+    conversationHistoryJids: session.conversationHistory ? Object.keys(session.conversationHistory) : [],
+  });
+});
+
+// ✅ NEW: Live AI test endpoint — call AI directly to verify key+model work
+app.post('/api/test-ai/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const { testMessage } = req.body;
+  const session = activeSessions.get(userId);
+  const aiConf = session?.aiSettings?.['global'];
+
+  if (!aiConf) {
+    // Try loading from disk
+    const aiPath = path.join(SESSIONS_DIR, userId, 'ai-settings.json');
+    if (fs.existsSync(aiPath)) {
+      try {
+        const diskConf = JSON.parse(fs.readFileSync(aiPath, 'utf8'));
+        const reply = await generateAIReply(diskConf.model || 'openrouter', diskConf.apiKey, diskConf.systemPrompt, [], testMessage || 'Say hello!');
+        return res.json({ source: 'disk', model: diskConf.model, reply, keyPrefix: diskConf.apiKey ? diskConf.apiKey.substring(0,12)+'...' : 'EMPTY' });
+      } catch (e) {
+        return res.status(500).json({ error: 'Failed to read disk settings', details: e.message });
+      }
+    }
+    return res.status(404).json({ error: 'No AI settings found in memory or disk for this user' });
+  }
+
+  const reply = await generateAIReply(aiConf.model || 'openrouter', aiConf.apiKey, aiConf.systemPrompt, [], testMessage || 'Say hello!');
+  res.json({ source: 'memory', model: aiConf.model, reply, keyPrefix: aiConf.apiKey ? aiConf.apiKey.substring(0,12)+'...' : 'EMPTY' });
+});
 
 app.get('/api/session-status/:userId', (req, res) => {
   const session = activeSessions.get(req.params.userId);
@@ -362,25 +496,35 @@ app.get('/api/session-status/:userId', (req, res) => {
 app.post('/api/settings/:userId', (req, res) => {
   const { userId } = req.params;
   const settingsObj = req.body;
-  const session = activeSessions.get(userId);
-  
+
   const globalConf = {
     enabled: true,
     model: settingsObj.ai_model || 'openrouter',
     apiKey: settingsObj.ai_api_key || '',
-    systemPrompt: (settingsObj.ai_system_prompt || '') + '\n' + (settingsObj.ai_global_memory || ''),
+    systemPrompt: ((settingsObj.ai_system_prompt || '') + '\n' + (settingsObj.ai_global_memory || '')).trim(),
   };
-  
+
+  console.log(`[Settings] Saving for userId=${userId} | model=${globalConf.model} | keyPrefix=${globalConf.apiKey ? globalConf.apiKey.substring(0,12)+'...' : 'EMPTY'}`);
+
+  // ✅ FIX: Always update in-memory session — create a minimal entry if session doesn't exist yet
+  let session = activeSessions.get(userId);
   if (session) {
     session.aiSettings = session.aiSettings || {};
     session.aiSettings['global'] = globalConf;
+    console.log(`[Settings] ✅ Updated in-memory session for ${userId}`);
+  } else {
+    // Session not in memory yet — persist to disk only; it will be loaded when session starts
+    console.log(`[Settings] ⚠️  No active session in memory for ${userId} — saving to disk only`);
+    console.log(`[Settings] 💡 Settings will be loaded automatically when WhatsApp reconnects`);
   }
-  
+
+  // Always persist to disk
   const sessionPath = path.join(SESSIONS_DIR, userId);
   if (!fs.existsSync(sessionPath)) fs.mkdirSync(sessionPath, { recursive: true });
   fs.writeFileSync(path.join(sessionPath, 'ai-settings.json'), JSON.stringify(globalConf, null, 2));
-  
-  res.json({ success: true });
+  console.log(`[Settings] ✅ Saved to disk: ${path.join(sessionPath, 'ai-settings.json')}`);
+
+  res.json({ success: true, model: globalConf.model, keySet: !!globalConf.apiKey });
 });
 
 // ─── API & Webhook Endpoints ──────────────────────────────────────────────
@@ -437,7 +581,7 @@ async function restoreExistingSessions() {
 }
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, async () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`\n🚀 WhatsApp AI Backend running on port ${PORT}`);
   console.log(`📡 Socket.IO ready`);
   await restoreExistingSessions();
