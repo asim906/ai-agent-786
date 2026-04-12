@@ -101,7 +101,7 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     }
 
     // OpenRouter (default)
-    const openRouterModel = (model && model.includes('/')) ? model : 'openai/gpt-4o-mini';
+    const openRouterModel = (model && typeof model === 'string' && model.includes('/')) ? model : 'openai/gpt-4o-mini';
     console.log(`[AI] Using OpenRouter (${openRouterModel})...`);
     
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -125,12 +125,6 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     const reply = data?.choices?.[0]?.message?.content?.trim() || null;
     console.log(`[AI] OpenRouter reply: ${reply ? reply.substring(0,80) : 'NULL'}`);
     return reply;
-
-  } catch (err) {
-    console.error('[AI] ❌ Exception in generateAIReply:', err.message);
-    return null;
-  }
-}
 
   } catch (err) {
     console.error('[AI] ❌ Exception in generateAIReply:', err.message);
@@ -310,7 +304,23 @@ async function startSession(userId) {
         }
 
         // Try contact-specific settings first, then global
-        const aiConf = session.aiSettings?.[jid] || session.aiSettings?.['global'] || null;
+        let aiConf = session.aiSettings?.[jid] || session.aiSettings?.['global'] || null;
+
+        // ✅ FAIL-SAFE: If settings missing from RAM, try reading from disk
+        if (!aiConf) {
+          console.log(`[${userId}] ⚠️  AI Conf missing in RAM — attempting disk reload...`);
+          const aiPath = path.join(SESSIONS_DIR, userId, 'ai-settings.json');
+          if (fs.existsSync(aiPath)) {
+            try {
+              aiConf = JSON.parse(fs.readFileSync(aiPath, 'utf8'));
+              session.aiSettings = session.aiSettings || {};
+              session.aiSettings['global'] = aiConf;
+              console.log(`[${userId}] ✅ Config restored from disk successfully`);
+            } catch (e) {
+              console.error(`[${userId}] ❌ Failed to parse ai-settings.json from disk:`, e.message);
+            }
+          }
+        }
 
         console.log(`[${userId}] 🔍 aiSettings dump:`, JSON.stringify({
           hasSessionAiSettings: !!session.aiSettings,
@@ -588,6 +598,12 @@ async function restoreExistingSessions() {
     const credsPath = path.join(SESSIONS_DIR, userId, 'creds.json');
     if (!fs.existsSync(credsPath)) continue;
     console.log(`[Startup] Restoring: ${userId}`);
+    const aiPath = path.join(SESSIONS_DIR, userId, 'ai-settings.json');
+    if (fs.existsSync(aiPath)) {
+      console.log(`[Startup] ✓ Found AI config for ${userId}`);
+    } else {
+      console.log(`[Startup] ⚠️  No AI config found for ${userId} — bot will be manual only until configured`);
+    }
     try { await startSession(userId); }
     catch (err) { console.error(`[Startup] Failed ${userId}:`, err.message); }
   }
