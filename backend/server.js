@@ -121,9 +121,19 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     });
     const data = await res.json();
     console.log('[AI] OpenRouter raw response status:', res.status);
-    if (data.error) console.error('[AI] OpenRouter API error:', JSON.stringify(data.error));
-    const reply = data?.choices?.[0]?.message?.content?.trim() || null;
-    console.log(`[AI] OpenRouter reply: ${reply ? reply.substring(0,80) : 'NULL'}`);
+    
+    if (data.error) {
+       console.error('[AI] ❌ OpenRouter returned an error:', JSON.stringify(data.error));
+       return null;
+    }
+
+    if (!data.choices || data.choices.length === 0) {
+       console.error('[AI] ❌ OpenRouter returned NO choices. Full response:', JSON.stringify(data));
+       return null;
+    }
+
+    const reply = data.choices[0].message?.content?.trim() || null;
+    console.log(`[AI] ✅ OpenRouter success. Reply start: "${reply ? reply.substring(0,50) : 'NULL'}"`);
     return reply;
 
   } catch (err) {
@@ -291,15 +301,15 @@ async function startSession(userId) {
 
         // AI Auto-Reply SHOULD NOT trigger if the message was sent by the user themselves
         if (isFromMe) {
-          console.log(`[${userId}] ⏭️  Skipping AI — message is from ME`);
+          console.log(`[${userId}] ⏭️  [AI AUTO-SKIP] Message came FROM the bot phone itself. skipping.`);
           continue;
         }
 
         // ─── LOG: AI trigger check ────────────────────────────
-        console.log(`[${userId}] 🤖 Checking AI auto-reply conditions...`);
+        console.log(`[${userId}] 🤖 [AI STEP 1] Checking auto-reply eligibility...`);
 
         if (!session) {
-          console.log(`[${userId}] ❌ AI Skip: no session object in activeSessions map`);
+          console.log(`[${userId}] ❌ [AI STEP 1 ERROR] No session object found for this user in activeSessions!`);
           continue;
         }
 
@@ -307,40 +317,36 @@ async function startSession(userId) {
         let aiConf = session.aiSettings?.[jid] || session.aiSettings?.['global'] || null;
 
         // ✅ FAIL-SAFE: If settings missing from RAM, try reading from disk
-        if (!aiConf) {
-          console.log(`[${userId}] ⚠️  AI Conf missing in RAM — attempting disk reload...`);
+        if (!aiConf || !aiConf.apiKey) {
+          console.log(`[${userId}] ⚠️  [AI STEP 2] Config missing in RAM during message receipt. Attempting disk reload...`);
           const aiPath = path.join(SESSIONS_DIR, userId, 'ai-settings.json');
           if (fs.existsSync(aiPath)) {
             try {
               aiConf = JSON.parse(fs.readFileSync(aiPath, 'utf8'));
               session.aiSettings = session.aiSettings || {};
               session.aiSettings['global'] = aiConf;
-              console.log(`[${userId}] ✅ Config restored from disk successfully`);
+              console.log(`[${userId}] ✅ [AI STEP 2] Settings successfully re-synced from disk.`);
             } catch (e) {
-              console.error(`[${userId}] ❌ Failed to parse ai-settings.json from disk:`, e.message);
+              console.error(`[${userId}] ❌ [AI STEP 2 ERROR] Failed reading disk settings:`, e.message);
             }
+          } else {
+            console.log(`[${userId}] ❌ [AI STEP 2 ERROR] No settings file found at ${aiPath}`);
           }
         }
 
-        console.log(`[${userId}] 🔍 aiSettings dump:`, JSON.stringify({
-          hasSessionAiSettings: !!session.aiSettings,
-          keys: session.aiSettings ? Object.keys(session.aiSettings) : [],
-          globalExists: !!session.aiSettings?.['global'],
-          globalModel: session.aiSettings?.['global']?.model,
-          globalKeyPrefix: session.aiSettings?.['global']?.apiKey ? session.aiSettings['global'].apiKey.substring(0,12)+'...' : 'EMPTY',
-        }));
-
         if (!aiConf) {
-          console.log(`[${userId}] ❌ AI Skip: no AI settings found (neither contact-specific nor global)`);
-          console.log(`[${userId}] 💡 Fix: Go to dashboard Settings tab and click Save Settings`);
+          console.log(`[${userId}] ❌ [AI STEP 3 ERROR] No AI configuration found. User must save settings in Dashboard.`);
           continue;
         }
 
-        if (!aiConf.apiKey || !aiConf.apiKey.trim()) {
-          console.log(`[${userId}] ❌ AI Skip: apiKey is EMPTY`);
-          console.log(`[${userId}] 💡 Fix: Enter your API key in Settings and click Save Settings`);
+        const trimmedKey = aiConf.apiKey ? aiConf.apiKey.trim() : '';
+        if (!trimmedKey) {
+          console.log(`[${userId}] ❌ [AI STEP 4 ERROR] API Key is EMPTY after trim. User must enter key in Settings.`);
           continue;
         }
+
+        // ─── LOG: AI Stage 2 ────────────────────────────
+        console.log(`[${userId}] ✅ [AI STEP 5 PROCEEDING] Model: ${aiConf.model} | KeyPrefix: ${trimmedKey.substring(0,10)}...`);
 
         // ─── LOG: AI is triggering ────────────────────────────
         console.log(`[${userId}] ✅ AI TRIGGERING | model=${aiConf.model} | key=${aiConf.apiKey.substring(0,12)}...`);
