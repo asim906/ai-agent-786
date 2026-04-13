@@ -360,6 +360,9 @@ async function startSession(userId) {
 
         if (!aiConf) {
           console.log(`[${userId}] ❌ [AI STEP 3 ERROR] No AI configuration found for user.`);
+          const errMsg = "⚠️ AI is not configured for this account. Please set your API key in the dashboard.";
+          await waSocket.sendMessage(jid, { text: errMsg });
+          emitToUser(userId, 'ai_error', { jid, error: 'Configuration Missing', detail: 'No AI settings found.' });
           continue;
         }
 
@@ -372,6 +375,9 @@ async function startSession(userId) {
         const trimmedKey = aiConf.apiKey ? aiConf.apiKey.trim() : '';
         if (!trimmedKey) {
           console.log(`[${userId}] ❌ [AI STEP 4 ERROR] API Key is empty.`);
+          const errMsg = "⚠️ AI Error: API Key is missing. Please check your settings.";
+          await waSocket.sendMessage(jid, { text: errMsg });
+          emitToUser(userId, 'ai_error', { jid, error: 'API Key Missing', detail: 'Key is empty in settings.' });
           continue;
         }
 
@@ -415,7 +421,13 @@ async function startSession(userId) {
         } else {
           console.error(`[${userId}] ❌ [AI STEP 6 ERROR] ${result.error}: ${result.detail}`);
           
-          // Emit a system error to the dashboard ONLY
+          // Send Error to USER directly on WhatsApp (PER USER REQUEST)
+          const friendlyError = `⚠️ AI Response Error: ${result.error}. Please try again shortly.`;
+          try {
+             await waSocket.sendMessage(jid, { text: friendlyError });
+          } catch(e) {}
+
+          // Emit a system error to the dashboard
           emitToUser(userId, 'ai_error', {
             jid,
             error: result.error,
