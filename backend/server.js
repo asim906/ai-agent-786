@@ -179,16 +179,30 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
 async function startSession(userId) {
   // ✅ FIX 1: If already connected, do nothing
   const existing = activeSessions.get(userId);
-  if (existing?.status === 'connected' && existing?.waSocket?.user) {
-    console.log(`[${userId}] Already connected — skipping startSession`);
-    emitToUser(userId, 'connection_update', { userId, status: 'connected' });
+  let session = activeSessions.get(userId);
+  
+  // ✅ FIX: Don't just return if session exists; check if socket is genuinely active
+  if (session && session.starting) {
+    console.log(`[${userId}] ⏳ Session already starting...`);
     return;
   }
+  
+  // If we have a socket but we're calling startSession, it means we likely want a RE-connection
+  if (session && session.waSocket) {
+    console.log(`[${userId}] 🔄 Re-initializing existing session socket...`);
+    try { 
+      session.waSocket.ev.removeAllListeners();
+      session.waSocket.logout().catch(() => {}); 
+    } catch(e){}
+    session.waSocket = null;
+  }
 
-  // ✅ FIX 2: If session is already in the process of starting, do nothing
-  if (existing?.starting) {
-    console.log(`[${userId}] Session already starting — skipping duplicate`);
-    return;
+  if (!session) {
+    console.log(`[${userId}] ✨ Initializing fresh session object in RAM...`);
+    session = { status: 'disconnected', aiSettings: {}, conversationHistory: {}, starting: true };
+    activeSessions.set(userId, session);
+  } else {
+    session.starting = true;
   }
 
   const userConfigPath = path.join(CONFIGS_DIR, userId);
@@ -251,32 +265,25 @@ async function startSession(userId) {
       }
 
       if (connection === 'close') {
-        const errCode = lastDisconnect?.error?.output?.statusCode;
-        const loggedOut = errCode === DisconnectReason.loggedOut;
-        console.log(`[${userId}] Connection closed. Code: ${errCode}. LoggedOut: ${loggedOut}`);
+        const code = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.name;
+        const shouldReconnect = code !== DisconnectReason.loggedOut;
+        console.log(`[${userId}] Connection closed. Code: ${code}. Reconnecting: ${shouldReconnect}`);
 
-        const s = activeSessions.get(userId);
-        if (s) s.status = 'disconnected';
-        emitToUser(userId, 'connection_update', { userId, status: loggedOut ? 'logged_out' : 'disconnected' });
-
-        if (loggedOut) {
-          // ✅ FIX 3: Only delete if truly logged out from phone
-          activeSessions.delete(userId);
-          fs.rmSync(sessionPath, { recursive: true, force: true });
-          console.log(`[${userId}] Session cleared — user logged out from phone`);
+        if (shouldReconnect) {
+          const session = activeSessions.get(userId);
+          if (session) {
+            session.status = 'disconnected';
+            session.waSocket = null;
+            session.starting = false;
+          }
+          // Use a slight delay before reconnecting to avoid spam
+          setTimeout(() => startSession(userId), 5000);
         } else {
-          // ✅ FIX 4: Auto-reconnect with backoff (NOT if browser refresh)
-          // Wait 5s then retry silently
-          const s2 = activeSessions.get(userId);
-          if (s2) s2.starting = false; // allow retry
-          setTimeout(async () => {
-            const s3 = activeSessions.get(userId);
-            // Only retry if the session still exists and is not already connected
-            if (s3 && s3.status !== 'connected' && !s3.starting) {
-              console.log(`[${userId}] Auto-reconnecting...`);
-              await startSession(userId);
-            }
-          }, 5000);
+          console.log(`[${userId}] Session permanently cleared (Logged Out)`);
+          activeSessions.delete(userId);
+          if (fs.existsSync(sessionPath)) {
+            fs.rmSync(sessionPath, { recursive: true, force: true });
+          }
         }
       }
     });
@@ -306,7 +313,8 @@ async function startSession(userId) {
         const phone = jid.split('@')[0];
 
         // ─── LOG: Incoming message received ───────────────────
-        console.log(`\n[${userId}] 📩 INCOMING: "${text.substring(0, 60)}${text.length > 60 ? '...' : ''}" from ${senderName} (${phone})`);
+        const session = activeSessions.get(userId);
+        console.log(`\n[${userId}] 📩 INCOMING: "${text.substring(0, 60)}" from ${senderName} | SessionStatus: ${session ? session.status : 'NOT_IN_RAM'}`);
 
         // Emit ALL messages to frontend
         emitToUser(userId, 'message', { userId, jid, name: senderName, phone, text, fromMe: isFromMe, timestamp: Date.now() });
@@ -320,9 +328,8 @@ async function startSession(userId) {
         // ─── LOG: AI Stage 1 ────────────────────────────
         console.log(`[${userId}] 🤖 [AI STEP 1] Checking auto-reply eligibility...`);
 
-        const session = activeSessions.get(userId);
         if (!session) {
-          console.error(`[${userId}] ❌ [AI STEP 1 ERROR] No active session in RAM!`);
+          console.error(`[${userId}] ❌ [AI STEP 1 ERROR] No active session (waSocket) in RAM!`);
           continue;
         }
 
