@@ -33,6 +33,7 @@ export default function AISettings({ userId, contactJid, contactName }: AISettin
   const [newQ, setNewQ] = useState('');
   const [newA, setNewA] = useState('');
   const [isGlobalMode, setIsGlobalMode] = useState(true);
+  const [showKey, setShowKey] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -221,19 +222,33 @@ export default function AISettings({ userId, contactJid, contactName }: AISettin
       {/* API Key (Optional for OpenRouter) */}
       <div style={{ marginBottom: 20 }}>
         <h4 style={{ marginBottom: 8, color: 'var(--text-secondary)', textTransform: 'uppercase', fontSize: '0.72rem', letterSpacing: '0.08em' }}>
-          Service Configurations
+          Service Configurations (API Key)
         </h4>
-        <input
-          id="api-key-input"
-          type="password"
-          className="input"
-          placeholder="OpenRouter API key (optional for free models)..."
-          value={apiKey}
-          onChange={e => setApiKey(e.target.value)}
-          style={{ fontSize: '0.82rem' }}
-        />
+        <div style={{ position: 'relative' }}>
+          <input
+            id="api-key-input"
+            type={showKey ? 'text' : 'password'}
+            className="input"
+            placeholder="OpenRouter/OpenAI API key..."
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            style={{ fontSize: '0.82rem', paddingRight: '40px' }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowKey(!showKey)}
+            style={{
+              position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+              background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem',
+              color: 'var(--text-muted)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}
+          >
+            {showKey ? '👁️' : '🔒'}
+          </button>
+        </div>
         <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 5 }}>
-          ⚠️ Only required if OpenRouter free models have strict quotas.
+          ⚠️ Key is stored securely on the backend (not pushed to GitHub).
         </p>
       </div>
 

@@ -7,6 +7,7 @@ node_modules/
 
 # Backend sessions (user-specific WhatsApp auth — never commit)
 backend/sessions/
+backend/configs/
 backend/temp_media/
 backend/eng.traineddata
 

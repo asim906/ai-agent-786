@@ -60,6 +60,7 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
   ];
 
   const safeKey = apiKey ? apiKey.trim() : '';
+  const keyIdentifier = safeKey ? `${safeKey.substring(0, 4)}...` : 'EMPTY';
   const maxAttempts = 3;
   
   if (!safeKey) {
@@ -72,7 +73,7 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     const timeout = setTimeout(() => controller.abort(), 35000); // 35s timeout
     
     try {
-      console.log(`[AI] 🚀 [Attempt ${attempt}/${maxAttempts}] API Call (model=${model})`);
+      console.log(`[AI] 🚀 [Attempt ${attempt}/${maxAttempts}] API Call | model=${model} | key=${keyIdentifier}`);
 
       let res, data;
       if (model === 'gemini') {
