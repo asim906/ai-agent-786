@@ -177,8 +177,8 @@ export default function ChatWindow({ userId, contact, onSendMessage, refreshTrig
                 {m.fromMe && <span style={{ color: 'var(--accent-green)' }}>✓✓</span>}
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {isTyping && (
             <div className="fade-in flex-row justify-start">
