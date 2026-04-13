@@ -130,16 +130,37 @@ export default function ChatWindow({ userId, contact, onSendMessage, refreshTrig
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-24 flex-col gap-24">
-        {messages.map((m, idx) => (
-          <div key={m.id} className={`fade-up flex-row ${m.fromMe ? 'justify-end' : 'justify-start'}`}>
-            <div className="flex-col" style={{
-              maxWidth: '75%',
-              padding: '12px 16px',
-              borderRadius: m.fromMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-              background: m.fromMe ? 'var(--bg-active)' : 'rgba(255,255,255,0.03)',
-              border: m.fromMe ? '1px solid var(--border-accent)' : '1px solid rgba(255,255,255,0.05)',
-              boxShadow: m.aiGenerated ? '0 8px 32px rgba(139, 92, 246, 0.15)' : 'none'
-            }}>
+        {messages.map((m, idx) => {
+          // @ts-ignore
+          if (m.isSystem) {
+             return (
+               <div key={m.id} className="fade-in flex-row justify-center py-8">
+                 <div style={{
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    color: '#ef4444',
+                    padding: '8px 16px',
+                    borderRadius: '12px',
+                    fontSize: '0.8rem',
+                    textAlign: 'center',
+                    maxWidth: '85%'
+                 }}>
+                   {m.text}
+                 </div>
+               </div>
+             );
+          }
+
+          return (
+            <div key={m.id} className={`fade-up flex-row ${m.fromMe ? 'justify-end' : 'justify-start'}`}>
+              <div className="flex-col" style={{
+                maxWidth: '75%',
+                padding: '12px 16px',
+                borderRadius: m.fromMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                background: m.fromMe ? 'var(--bg-active)' : 'rgba(255,255,255,0.03)',
+                border: m.fromMe ? '1px solid var(--border-accent)' : '1px solid rgba(255,255,255,0.05)',
+                boxShadow: m.aiGenerated ? '0 8px 32px rgba(139, 92, 246, 0.15)' : 'none'
+              }}>
               {m.imageUrl && (
                   <img src={m.imageUrl} alt="attachment" style={{ width: '100%', borderRadius: 12, marginBottom: m.text ? 8 : 0 }} />
               )}

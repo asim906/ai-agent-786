@@ -135,6 +135,28 @@ function DashboardContent({ user, isDemo }: { user: any; isDemo: boolean }) {
       setRefreshTrigger(prev => prev + 1);
     });
 
+    // ✅ Handle AI Errors (API Key issues, Quota, etc.)
+    newSocket.on('ai_error', async (data) => {
+      if (!user?.uid) return;
+      console.log('[AI ERROR]', data.error);
+
+      // Save as a system message in the chat
+      await addMessage({
+        id: `sys-${Date.now()}`,
+        userId: user.uid,
+        contactJid: data.jid,
+        text: `🤖 AI Error: ${data.error} — ${data.detail || 'Check your settings.'}`,
+        fromMe: false,
+        timestamp: Date.now(),
+        aiGenerated: false,
+        type: 'text',
+        // @ts-ignore
+        isSystem: true // unique flag for UI
+      });
+
+      setRefreshTrigger(prev => prev + 1);
+    });
+
     return () => { newSocket.close(); };
   }, [user, isDemo]);
 

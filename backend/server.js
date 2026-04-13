@@ -64,16 +64,18 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
   const maxAttempts = 3;
   
   if (!safeKey) {
-    console.error(`[AI] ❌ API key is empty — cannot call AI`);
-    return null;
+    console.error(`[AI] ❌ API key is empty`);
+    return { success: false, error: 'API Key Missing', detail: 'Please add your API key in settings.' };
   }
+
+  console.log(`[AI] 🔑 [Key Loaded] ${keyIdentifier} | Model: ${model}`);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 35000); // 35s timeout
     
     try {
-      console.log(`[AI] 🚀 [Attempt ${attempt}/${maxAttempts}] API Call | model=${model} | key=${keyIdentifier}`);
+      console.log(`[AI] 🚀 [Attempt ${attempt}/${maxAttempts}] API Call...`);
 
       let res, data;
       if (model === 'gemini') {
@@ -126,19 +128,24 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
       
       if (!res.ok) {
         const errMsg = data.error?.message || JSON.stringify(data.error);
-        console.warn(`[AI] ⚠️ attempt ${attempt} failed with ${res.status}: ${errMsg.substring(0, 100)}`);
+        console.warn(`[AI] ⚠️ attempt ${attempt} failed with ${res.status}`);
         
+        // Map common errors
+        let humanError = 'API Request Failed';
+        if (res.status === 401) humanError = 'Invalid API Key';
+        else if (res.status === 402 || res.status === 429) humanError = 'Quota Exceeded / No Credits';
+        else if (res.status >= 500) humanError = 'AI Service Unavailable';
+
         // Don't retry on user errors (400, 401, 404)
         if (res.status < 500 && res.status !== 429) {
-           return `AI API Error (${res.status}): ${errMsg}`;
+           return { success: false, error: humanError, detail: errMsg };
         }
         
         if (attempt < maxAttempts) {
-           console.log(`[AI] 🔄 Retrying in 2s...`);
            await sleep(2000 * attempt);
            continue;
         }
-        return `AI API Error after ${maxAttempts} tries (${res.status}): ${errMsg}`;
+        return { success: false, error: humanError, detail: errMsg };
       }
 
       let reply = null;
@@ -149,28 +156,26 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
       }
 
       if (!reply) {
-        console.warn(`[AI] ⚠️ Attempt ${attempt} returned empty content.`);
         if (attempt < maxAttempts) {
            await sleep(1000);
            continue;
         }
-        return "AI Error: Model returned an empty response after multiple attempts.";
+        return { success: false, error: 'Empty Response', detail: 'Model returned no text content.' };
       }
 
-      console.log(`[AI] ✅ SUCCESS. Reply (40 chars): "${reply.substring(0, 40)}..."`);
-      return reply;
+      console.log(`[AI] ✅ [Reply Received] "${reply.substring(0, 40)}..."`);
+      return { success: true, reply };
 
     } catch (err) {
       clearTimeout(timeout);
       const isTimeout = err.name === 'AbortError';
-      console.error(`[AI] ❌ Attempt ${attempt} Exception:`, isTimeout ? 'TIMEOUT (35s)' : err.message);
+      console.error(`[AI] ❌ Attempt ${attempt} Exception:`, isTimeout ? 'TIMEOUT' : err.message);
       
       if (attempt < maxAttempts) {
-        console.log(`[AI] 🔄 Retrying in 3s...`);
         await sleep(3000 * attempt);
         continue;
       }
-      return `AI Exception after ${maxAttempts} attempts: ${isTimeout ? 'Request timed out' : err.message}`;
+      return { success: false, error: isTimeout ? 'Request Timeout' : 'System Exception', detail: err.message };
     }
   }
 }
@@ -380,7 +385,7 @@ async function startSession(userId) {
         const history = session.conversationHistory[jid].slice(-10);
 
         console.log(`[${userId}] 📤 Calling AI API...`);
-        const reply = await generateAIReply(
+        const result = await generateAIReply(
           aiConf.model || 'openrouter',
           aiConf.apiKey,
           aiConf.systemPrompt,
@@ -388,18 +393,18 @@ async function startSession(userId) {
           text
         );
 
-        if (reply) {
+        if (result.success) {
           console.log(`[${userId}] ✅ [AI STEP 6 SUCCESS] Reply received.`);
           try {
-            await waSocket.sendMessage(jid, { text: reply });
+            await waSocket.sendMessage(jid, { text: result.reply });
             
             // Push both exchange parts to history on success
             session.conversationHistory[jid].push({ role: 'user', content: text });
-            session.conversationHistory[jid].push({ role: 'assistant', content: reply });
+            session.conversationHistory[jid].push({ role: 'assistant', content: result.reply });
             
             emitToUser(userId, 'message', {
               userId, jid, name: senderName, phone,
-              text: reply, fromMe: true,
+              text: result.reply, fromMe: true,
               timestamp: Date.now(),
               aiGenerated: true
             });
@@ -408,7 +413,15 @@ async function startSession(userId) {
             console.error(`[${userId}] ❌ [AI STEP 7 ERROR] waSocket.sendMessage failed:`, sendErr.message);
           }
         } else {
-          console.log(`[${userId}] ❌ [AI STEP 6 ERROR] AI returned NULL or error.`);
+          console.error(`[${userId}] ❌ [AI STEP 6 ERROR] ${result.error}: ${result.detail}`);
+          
+          // Emit a system error to the dashboard ONLY
+          emitToUser(userId, 'ai_error', {
+            jid,
+            error: result.error,
+            detail: result.detail,
+            timestamp: Date.now()
+          });
         }
         console.log(`[${userId}] 🏁 AI Operation Complete.\n`);
       }
