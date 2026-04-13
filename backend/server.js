@@ -47,6 +47,11 @@ function emitToUser(userId, event, data) {
 }
 
 // ─── AI Reply Helper ─────────────────────────────────────────────────
+const VERSION = '1.0.5-STABLE';
+
+// Helper for wait
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
   const messages = [
     { role: 'system', content: systemPrompt || 'You are a helpful WhatsApp assistant. Reply naturally and concisely.' },
@@ -55,117 +60,117 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
   ];
 
   const safeKey = apiKey ? apiKey.trim() : '';
-  console.log(`[AI] 🚀 generateAIReply called | model=${model} | keyPrefix=${safeKey ? safeKey.substring(0,12)+'...' : 'EMPTY'}`);
-
+  const maxAttempts = 3;
+  
   if (!safeKey) {
-    console.error('[AI] ❌ API key is empty — cannot call AI');
+    console.error(`[AI] ❌ API key is empty — cannot call AI`);
     return null;
   }
 
-  try {
-    if (model === 'gemini') {
-      console.log('[AI] Using Gemini 2.0 Flash...');
-      const contents = messages
-        .filter(m => m.role !== 'system')
-        .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
-      const sys = messages.find(m => m.role === 'system');
-      
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${safeKey}`,
-        {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 35000); // 35s timeout
+    
+    try {
+      console.log(`[AI] 🚀 [Attempt ${attempt}/${maxAttempts}] API Call (model=${model})`);
+
+      let res, data;
+      if (model === 'gemini') {
+        const contents = messages
+          .filter(m => m.role !== 'system')
+          .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+        const sys = messages.find(m => m.role === 'system');
+        
+        res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${safeKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              systemInstruction: sys ? { parts: [{ text: sys.content }] } : undefined,
+              contents,
+              generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
+            }),
+            signal: controller.signal
+          }
+        );
+      } else if (model === 'openai') {
+        res = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            systemInstruction: sys ? { parts: [{ text: sys.content }] } : undefined,
-            contents,
-            generationConfig: { maxOutputTokens: 1000, temperature: 0.7 },
-          }),
+          headers: { Authorization: `Bearer ${safeKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'gpt-4o-mini', messages, max_tokens: 1000, temperature: 0.7 }),
+          signal: controller.signal
+        });
+      } else {
+        // OpenRouter (default or specified)
+        let openRouterModel = model;
+        if (!model || model === 'openrouter' || !model.includes('/')) {
+            openRouterModel = 'openai/gpt-4o-mini';
         }
-      );
+        res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${safeKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://whatsapp-ai-agent.app',
+            'X-Title': 'WhatsApp AI Agent',
+          },
+          body: JSON.stringify({ model: openRouterModel, messages, max_tokens: 1000, temperature: 0.7 }),
+          signal: controller.signal
+        });
+      }
 
-      console.log('[AI] Gemini HTTP Status:', res.status);
-      const data = await res.json();
+      clearTimeout(timeout);
+      data = await res.json();
       
       if (!res.ok) {
-        console.error('[AI] Gemini API Error Response:', JSON.stringify(data.error));
-        return `AI API Error (${res.status}): ${data.error?.message || 'Unknown error'}`;
-      }
-
-      const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
-      console.log(`[AI] Gemini Success: ${reply ? reply.substring(0,80) : 'NULL'}`);
-      return reply;
-    }
-
-    if (model === 'openai') {
-      console.log('[AI] Using OpenAI GPT-4o-mini...');
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${safeKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gpt-4o-mini', messages, max_tokens: 1000, temperature: 0.7 }),
-      });
-
-      console.log('[AI] OpenAI HTTP Status:', res.status);
-      const data = await res.json();
-
-      if (!res.ok) {
-        console.error('[AI] OpenAI API Error Response:', JSON.stringify(data.error));
-        return `AI API Error (${res.status}): ${data.error?.message || 'Unknown error'}`;
-      }
-
-      const reply = data?.choices?.[0]?.message?.content?.trim() || null;
-      console.log(`[AI] OpenAI Success: ${reply ? reply.substring(0,80) : 'NULL'}`);
-      return reply;
-    }
-
-    // OpenRouter (default or specified)
-    let openRouterModel = model;
-    if (!model || model === 'openrouter' || !model.includes('/')) {
-        openRouterModel = 'openai/gpt-4o-mini';
-    }
-    
-    console.log(`[AI] Using OpenRouter (${openRouterModel})...`);
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${safeKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://whatsapp-ai-agent.app',
-        'X-Title': 'WhatsApp AI Agent',
-      },
-      body: JSON.stringify({ 
-        model: openRouterModel, 
-        messages, 
-        max_tokens: 1000,
-        temperature: 0.7 
-      }),
-    });
-
-    console.log('[AI] OpenRouter HTTP Status:', res.status);
-    const data = await res.json();
-    
-    if (!res.ok) {
         const errMsg = data.error?.message || JSON.stringify(data.error);
-        console.error(`[AI] ❌ OpenRouter Error (${res.status}): ${errMsg}`);
-        return `AI API Error (${res.status}): ${errMsg}`;
+        console.warn(`[AI] ⚠️ attempt ${attempt} failed with ${res.status}: ${errMsg.substring(0, 100)}`);
+        
+        // Don't retry on user errors (400, 401, 404)
+        if (res.status < 500 && res.status !== 429) {
+           return `AI API Error (${res.status}): ${errMsg}`;
+        }
+        
+        if (attempt < maxAttempts) {
+           console.log(`[AI] 🔄 Retrying in 2s...`);
+           await sleep(2000 * attempt);
+           continue;
+        }
+        return `AI API Error after ${maxAttempts} tries (${res.status}): ${errMsg}`;
+      }
+
+      let reply = null;
+      if (model === 'gemini') {
+        reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+      } else {
+        reply = data?.choices?.[0]?.message?.content?.trim() || null;
+      }
+
+      if (!reply) {
+        console.warn(`[AI] ⚠️ Attempt ${attempt} returned empty content.`);
+        if (attempt < maxAttempts) {
+           await sleep(1000);
+           continue;
+        }
+        return "AI Error: Model returned an empty response after multiple attempts.";
+      }
+
+      console.log(`[AI] ✅ SUCCESS. Reply (40 chars): "${reply.substring(0, 40)}..."`);
+      return reply;
+
+    } catch (err) {
+      clearTimeout(timeout);
+      const isTimeout = err.name === 'AbortError';
+      console.error(`[AI] ❌ Attempt ${attempt} Exception:`, isTimeout ? 'TIMEOUT (35s)' : err.message);
+      
+      if (attempt < maxAttempts) {
+        console.log(`[AI] 🔄 Retrying in 3s...`);
+        await sleep(3000 * attempt);
+        continue;
+      }
+      return `AI Exception after ${maxAttempts} attempts: ${isTimeout ? 'Request timed out' : err.message}`;
     }
-
-    if (!data.choices || data.choices.length === 0) {
-       console.error('[AI] ❌ OpenRouter No choices returned.');
-       return "AI Error: Model returned no response (Check credits/billing).";
-    }
-
-    const reply = data.choices[0].message?.content?.trim();
-    if (!reply) {
-       console.error('[AI] ❌ OpenRouter Empty content returned.');
-       return "AI Error: Model returned an empty message.";
-    }
-
-    console.log(`[AI] ✅ SUCCESS. Reply (40 chars): "${reply.substring(0, 40)}..."`);
-    return reply;
-
-  } catch (err) {
-    console.error('[AI] ❌ Exception in generateAIReply:', err.stack || err.message);
-    return `AI System Exception: ${err.message}`;
   }
 }
 
@@ -626,7 +631,7 @@ async function restoreExistingSessions() {
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, '0.0.0.0', async () => {
-  console.log(`\n🚀 WhatsApp AI Backend running on port ${PORT}`);
+  console.log(`\n🚀 WhatsApp AI Backend ${VERSION} running on port ${PORT}`);
   console.log(`📡 Socket.IO ready`);
   await restoreExistingSessions();
 });
