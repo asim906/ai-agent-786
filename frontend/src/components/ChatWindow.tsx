@@ -176,6 +176,7 @@ export default function ChatWindow({ userId, contact, onSendMessage, refreshTrig
                 {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 {m.fromMe && <span style={{ color: 'var(--accent-green)' }}>✓✓</span>}
               </div>
+              </div>
             </div>
           );
         })}
