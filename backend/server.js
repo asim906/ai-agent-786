@@ -75,7 +75,7 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
     const timeout = setTimeout(() => controller.abort(), 35000); // 35s timeout
     
     try {
-      console.log(`[AI] 🚀 [Attempt ${attempt}/${maxAttempts}] API Call...`);
+      console.log(`[AI] Sending request to AI API (Attempt ${attempt}/${maxAttempts})`);
 
       let res, data;
       if (model === 'gemini') {
@@ -128,7 +128,7 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
       
       if (!res.ok) {
         const errMsg = data.error?.message || JSON.stringify(data.error);
-        console.warn(`[AI] ⚠️ attempt ${attempt} failed with ${res.status}`);
+        console.warn(`[AI] attempt ${attempt} failed with ${res.status}`);
         
         // Map common errors
         let humanError = 'API Request Failed';
@@ -138,6 +138,7 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
 
         // Don't retry on user errors (400, 401, 404)
         if (res.status < 500 && res.status !== 429) {
+           console.error(`[AI] ERROR: ${humanError}`);
            return { success: false, error: humanError, detail: errMsg };
         }
         
@@ -145,6 +146,7 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
            await sleep(2000 * attempt);
            continue;
         }
+        console.error(`[AI] ERROR: ${humanError}`);
         return { success: false, error: humanError, detail: errMsg };
       }
 
@@ -160,16 +162,18 @@ async function generateAIReply(model, apiKey, systemPrompt, history, userText) {
            await sleep(1000);
            continue;
         }
+        console.error(`[AI] ERROR: Empty Response`);
         return { success: false, error: 'Empty Response', detail: 'Model returned no text content.' };
       }
 
-      console.log(`[AI] ✅ [Reply Received] "${reply.substring(0, 40)}..."`);
+      console.log(`[AI] AI response received: "${reply.substring(0, 50)}..."`);
       return { success: true, reply };
 
     } catch (err) {
       clearTimeout(timeout);
       const isTimeout = err.name === 'AbortError';
-      console.error(`[AI] ❌ Attempt ${attempt} Exception:`, isTimeout ? 'TIMEOUT' : err.message);
+      const errMsg = isTimeout ? 'TIMEOUT' : err.message;
+      console.error(`[AI] ERROR: ${errMsg}`);
       
       if (attempt < maxAttempts) {
         await sleep(3000 * attempt);
@@ -235,6 +239,7 @@ async function startSession(userId) {
   });
 
   try {
+    const sessionPath = path.join(SESSIONS_DIR, userId);
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -312,18 +317,24 @@ async function startSession(userId) {
           msg.message?.extendedTextMessage?.text ||
           msg.message?.imageMessage?.caption || '';
         
-        // Skip if no text (e.g. just an image without caption)
-        if (!text && !msg.message?.imageMessage) continue;
-
-        const senderName = msg.pushName || jid.split('@')[0];
         const phone = jid.split('@')[0];
+        const senderName = msg.pushName || phone;
 
-        // ─── LOG: Incoming message received ───────────────────
-        const session = activeSessions.get(userId);
-        console.log(`\n[${userId}] 📩 INCOMING: "${text.substring(0, 60)}" from ${senderName} | SessionStatus: ${session ? session.status : 'NOT_IN_RAM'}`);
+        // Step 1 & 2: Receipt Log
+        console.log(`[${userId}] User message received: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}" from ${phone}`);
 
-        // Emit ALL messages to frontend
-        emitToUser(userId, 'message', { userId, jid, name: senderName, phone, text, fromMe: isFromMe, timestamp: Date.now() });
+        // ✅ Emit to Dashboard instantly
+        emitToUser(userId, 'message', { 
+           userId, jid, name: senderName, phone, 
+           text, fromMe: isFromMe, 
+           timestamp: Date.now(),
+           aiGenerated: false 
+        });
+
+        if (!text) {
+           console.log(`[${userId}] ⏭️  Message skipped (no text content).`);
+           continue;
+        }
 
         // AI Auto-Reply SHOULD NOT trigger if the message was sent by the user themselves
         if (isFromMe) {
@@ -331,11 +342,12 @@ async function startSession(userId) {
           continue;
         }
 
-        // ─── LOG: AI Stage 1 ────────────────────────────
-        console.log(`[${userId}] 🤖 [AI STEP 1] Checking auto-reply eligibility...`);
+        // Step 3: Trigger Log
+        console.log(`[${userId}] AI triggered for user`);
 
+        const session = activeSessions.get(userId);
         if (!session) {
-          console.error(`[${userId}] ❌ [AI STEP 1 ERROR] No active session (waSocket) in RAM!`);
+          console.error(`[${userId}] ERROR: No active session (waSocket) in RAM!`);
           continue;
         }
 
@@ -353,36 +365,35 @@ async function startSession(userId) {
               session.aiSettings['global'] = aiConf;
               console.log(`[${userId}] ✅ [AI STEP 2] Settings restored from disk.`);
             } catch (e) {
-              console.error(`[${userId}] ❌ [AI STEP 2 ERROR] Disk read failed:`, e.message);
+              console.error(`[${userId}] ERROR: Disk read failed: ${e.message}`);
             }
           }
         }
 
         if (!aiConf) {
-          console.log(`[${userId}] ❌ [AI STEP 3 ERROR] No AI configuration found for user.`);
-          const errMsg = "⚠️ AI is not configured for this account. Please set your API key in the dashboard.";
-          await waSocket.sendMessage(jid, { text: errMsg });
-          emitToUser(userId, 'ai_error', { jid, error: 'Configuration Missing', detail: 'No AI settings found.' });
+          const errMsg = "AI configuration missing for user account.";
+          console.error(`[${userId}] ERROR: ${errMsg}`);
+          const waErr = "⚠️ AI is not configured for this account. Please set your API key in the dashboard.";
+          await waSocket.sendMessage(jid, { text: waErr });
+          emitToUser(userId, 'ai_error', { jid, error: 'Configuration Missing', detail: errMsg });
           continue;
         }
 
         // Check if AI is explicitly disabled (default to enabled if aiConf exists)
         if (aiConf.enabled === false) {
-           console.log(`[${userId}] ⏭️  [AI STEP 3 SKIP] AI is explicitly disabled in settings.`);
+           console.log(`[${userId}] ⏭️  AI is explicitly disabled in settings.`);
            continue;
         }
 
         const trimmedKey = aiConf.apiKey ? aiConf.apiKey.trim() : '';
         if (!trimmedKey) {
-          console.log(`[${userId}] ❌ [AI STEP 4 ERROR] API Key is empty.`);
-          const errMsg = "⚠️ AI Error: API Key is missing. Please check your settings.";
-          await waSocket.sendMessage(jid, { text: errMsg });
-          emitToUser(userId, 'ai_error', { jid, error: 'API Key Missing', detail: 'Key is empty in settings.' });
+          const errMsg = "API Key is empty.";
+          console.error(`[${userId}] ERROR: ${errMsg}`);
+          const waErr = "⚠️ AI Error: API Key is missing. Please check your settings.";
+          await waSocket.sendMessage(jid, { text: waErr });
+          emitToUser(userId, 'ai_error', { jid, error: 'API Key Missing', detail: errMsg });
           continue;
         }
-
-        // ─── AI TRIGGERING ────────────────────────────
-        console.log(`[${userId}] ✅ [AI STEP 5 TRIGGERING] Model: ${aiConf.model} | Key: ${trimmedKey.substring(0,10)}...`);
 
         if (!session.conversationHistory) session.conversationHistory = {};
         if (!session.conversationHistory[jid]) session.conversationHistory[jid] = [];
@@ -390,7 +401,6 @@ async function startSession(userId) {
         // Add current user message to context-only (don't push to history yet to avoid duplicates if generateAIReply fails)
         const history = session.conversationHistory[jid].slice(-10);
 
-        console.log(`[${userId}] 📤 Calling AI API...`);
         const result = await generateAIReply(
           aiConf.model || 'openrouter',
           aiConf.apiKey,
@@ -400,7 +410,8 @@ async function startSession(userId) {
         );
 
         if (result.success) {
-          console.log(`[${userId}] ✅ [AI STEP 6 SUCCESS] Reply received.`);
+          // Step 6: Sending Log
+          console.log(`[${userId}] Sending message to user: "${result.reply.substring(0, 40)}..."`);
           try {
             await waSocket.sendMessage(jid, { text: result.reply });
             
@@ -414,12 +425,13 @@ async function startSession(userId) {
               timestamp: Date.now(),
               aiGenerated: true
             });
-            console.log(`[${userId}] 📱 [AI STEP 7] Reply sent to ${jid}`);
+            // Step 7: Success Log
+            console.log(`[${userId}] Message sent successfully to ${jid}\n`);
           } catch (sendErr) {
-            console.error(`[${userId}] ❌ [AI STEP 7 ERROR] waSocket.sendMessage failed:`, sendErr.message);
+            console.error(`[${userId}] ERROR: waSocket.sendMessage failed: ${sendErr.message}`);
           }
         } else {
-          console.error(`[${userId}] ❌ [AI STEP 6 ERROR] ${result.error}: ${result.detail}`);
+          console.error(`[${userId}] ERROR: ${result.error}: ${result.detail}`);
           
           // Send Error to USER directly on WhatsApp (PER USER REQUEST)
           const friendlyError = `⚠️ AI Response Error: ${result.error}. Please try again shortly.`;

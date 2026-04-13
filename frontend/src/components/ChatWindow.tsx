@@ -151,31 +151,35 @@ export default function ChatWindow({ userId, contact, onSendMessage, refreshTrig
              );
           }
 
+          // User wants Customer on RIGHT, AI on LEFT
+          const isAI = !!m.aiGenerated;
+          const alignRight = !isAI; 
+
           return (
-            <div key={m.id} className={`fade-up flex-row ${m.fromMe ? 'justify-end' : 'justify-start'}`}>
+            <div key={m.id} className={`fade-up flex-row ${alignRight ? 'justify-end' : 'justify-start'}`}>
               <div className="flex-col" style={{
                 maxWidth: '75%',
                 padding: '12px 16px',
-                borderRadius: m.fromMe ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                background: m.fromMe ? 'var(--bg-active)' : 'rgba(255,255,255,0.03)',
-                border: m.fromMe ? '1px solid var(--border-accent)' : '1px solid rgba(255,255,255,0.05)',
-                boxShadow: m.aiGenerated ? '0 8px 32px rgba(139, 92, 246, 0.15)' : 'none'
+                borderRadius: alignRight ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                background: alignRight ? 'var(--bg-active)' : 'rgba(255,255,255,0.03)',
+                border: alignRight ? '1px solid var(--border-accent)' : '1px solid rgba(255,255,255,0.05)',
+                boxShadow: isAI ? '0 8px 32px rgba(139, 92, 246, 0.15)' : 'none'
               }}>
-              {m.imageUrl && (
-                  <img src={m.imageUrl} alt="attachment" style={{ width: '100%', borderRadius: 12, marginBottom: m.text ? 8 : 0 }} />
-              )}
-              {m.text && <div style={{ lineHeight: 1.5, fontSize: '0.95rem' }}>{m.text}</div>}
-              
-              <div className="flex-row items-center justify-end gap-8 mt-8" style={{ opacity: 0.6, fontSize: '0.7rem', fontWeight: 500 }}>
-                {m.aiGenerated && (
-                    <span className="font-bold" style={{ 
-                        color: 'var(--accent-purple)', background: 'rgba(139, 92, 246, 0.1)', 
-                        padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase'
-                    }}>🤖 AI Assisted</span>
+                {m.imageUrl && (
+                    <img src={m.imageUrl} alt="attachment" style={{ width: '100%', borderRadius: 12, marginBottom: m.text ? 8 : 0 }} />
                 )}
-                {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                {m.fromMe && <span style={{ color: 'var(--accent-green)' }}>✓✓</span>}
-              </div>
+                {m.text && <div style={{ lineHeight: 1.5, fontSize: '0.95rem' }}>{m.text}</div>}
+                
+                <div className="flex-row items-center justify-end gap-8 mt-8" style={{ opacity: 0.6, fontSize: '0.7rem', fontWeight: 500 }}>
+                  {isAI && (
+                      <span className="font-bold" style={{ 
+                          color: 'var(--accent-purple)', background: 'rgba(139, 92, 246, 0.1)', 
+                          padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase'
+                      }}>🤖 AI Assisted</span>
+                  )}
+                  {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {m.fromMe && <span style={{ color: 'var(--accent-green)' }}>✓✓</span>}
+                </div>
               </div>
             </div>
           );
