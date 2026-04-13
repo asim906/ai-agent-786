@@ -1,6 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-
-const BACKEND_URL = 'https://whatsapp-ai-backend-production-38bd.up.railway.app';
+import { BACKEND_URL } from './config';
 
 let socket: Socket | null = null;
 

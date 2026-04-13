@@ -1,5 +1,6 @@
 'use client';
 
+import { BACKEND_URL } from '@/lib/config';
 import React, { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
@@ -64,7 +65,7 @@ function DashboardContent({ user, isDemo }: { user: any; isDemo: boolean }) {
   useEffect(() => {
     if (isDemo) { setConnectionStatus('connected'); return; }
 
-    const newSocket = io('https://whatsapp-ai-backend-production-38bd.up.railway.app');
+    const newSocket = io(BACKEND_URL);
     setSocket(newSocket);
 
     // ✅ KEY FIX: check_session first — don't blindly start a new one
